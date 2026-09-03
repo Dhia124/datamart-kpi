@@ -1,0 +1,8 @@
+# Copier en ~/.dbt/profiles.yml — ce fichier d'exemple ne contient aucun secret.
+dbt_kpi:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ../data/out/kpi.duckdb
+      threads: 4

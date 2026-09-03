@@ -1,0 +1,19 @@
+name: 'dbt_kpi'
+version: '1.0.0'
+profile: 'dbt_kpi'
+model-paths: ["models"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Seuils métier, versionnés en Git plutôt qu'en paramètres d'exécution
+  seuil_regularite_alerte: 0.80
+  ecart_causes_tolere_pct: 1.0
+
+models:
+  dbt_kpi:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

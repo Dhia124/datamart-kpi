@@ -1,0 +1,30 @@
+# Données
+data/raw/*
+data/out/*
+!data/raw/.gitkeep
+!data/out/.gitkeep
+
+# Secrets — jamais de credentials dans ce dépôt
+.env
+*.env
+credentials.json
+*.key
+*.pem
+profiles.yml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# dbt
+dbt_kpi/target/
+dbt_kpi/dbt_packages/
+dbt_kpi/logs/
+
+# OS
+.DS_Store
+
+.databricks

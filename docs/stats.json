@@ -1,0 +1,15 @@
+{
+  "lignes_source": 12544,
+  "lignes_conformes": 12002,
+  "lignes_rejetees": 542,
+  "liaisons": 146,
+  "mois": 102,
+  "faits_causes": 60568,
+  "periode": [
+    "2018-01",
+    "2026-06"
+  ],
+  "taux_2026": 82.14,
+  "taux_2018": 82.34,
+  "part_production": 70.1
+}

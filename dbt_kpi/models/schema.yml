@@ -1,0 +1,96 @@
+version: 2
+
+models:
+  - name: stg_regularite
+    description: Faits de régularité typés, joints à la dimension temps.
+    columns:
+      - name: mois_id
+        tests:
+          - not_null
+      - name: liaison_id
+        tests:
+          - not_null
+      - name: taux_regularite_pct
+        description: >
+          (trains circulés - trains en retard à l'arrivée) / trains circulés,
+          en pourcentage. Un train annulé n'est ni à l'heure ni en retard :
+          il sort du dénominateur.
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: taux_annulation_pct
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: nb_circule
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 0
+                inclusive: true
+    tests:
+      - combinaison_unique:
+          arguments:
+            colonnes: [mois_id, liaison_id]
+
+  - name: stg_causes
+    description: Causes de retard dépivotées — une ligne par mois, liaison et cause.
+    columns:
+      - name: cause_id
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [externe, infrastructure, gestion_trafic, materiel_roulant, gestion_gare, voyageurs]
+      - name: cause_famille
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Production', 'Hors production']
+      - name: pct_retard
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: nb_trains_attribues
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  - name: mart_regularite_mensuelle
+    description: Agrégat de pilotage mensuel par liaison, avec rang et drapeau d'alerte.
+    columns:
+      - name: libelle_liaison
+        tests:
+          - not_null
+      - name: rang_mensuel_moins_regulier
+        tests:
+          - intervalle_accepte:
+              arguments:
+                min_value: 1
+                inclusive: true
+    tests:
+      - combinaison_unique:
+          arguments:
+            colonnes: [mois_id, libelle_liaison, service]
+
+  - name: mart_causes_par_famille
+    description: Retards attribués par famille de cause, par mois et par liaison.
+    columns:
+      - name: cause_famille
+        tests:
+          - not_null
+    tests:
+      - combinaison_unique:
+          arguments:
+            colonnes: [mois_id, liaison_id, cause_famille]

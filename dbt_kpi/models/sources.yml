@@ -1,0 +1,46 @@
+version: 2
+
+sources:
+  - name: mart
+    schema: main
+    description: >
+      Modèle en étoile chargé par le pipeline Python (src/03_load_star.py).
+      dbt intervient au-dessus : il documente, teste et expose les agrégats.
+    meta:
+      grain: une ligne par (mois, service, gare de départ, gare d'arrivée)
+    tables:
+      - name: dim_liaison
+        columns:
+          - name: liaison_id
+            tests: [unique, not_null]
+      - name: dim_temps
+        columns:
+          - name: mois_id
+            tests: [unique, not_null]
+      - name: dim_cause
+        columns:
+          - name: cause_id
+            tests: [unique, not_null]
+      - name: fait_regularite
+        columns:
+          - name: liaison_id
+            tests:
+              - relationships:
+                  arguments:
+                    to: source('mart', 'dim_liaison')
+                    field: liaison_id
+          - name: mois_id
+            tests:
+              - relationships:
+                  arguments:
+                    to: source('mart', 'dim_temps')
+                    field: mois_id
+      - name: fait_retard_cause
+        columns:
+          - name: cause_id
+            tests:
+              - relationships:
+                  arguments:
+                    to: source('mart', 'dim_cause')
+                    field: cause_id
+      - name: rejets
