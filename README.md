@@ -6,6 +6,9 @@ sur les données ouvertes de régularité mensuelle des TGV (source : SNCF / AQS
 **Chaîne complète** : extraction → règles de qualité avec quarantaine motivée →
 modèle en étoile → couche dbt testée → restitution Power BI.
 
+![Tableau de bord — pilotage](docs/dashboard_pilotage.png)
+![Tableau de bord — qualité des données](docs/dashboard_qualite.png)
+
 | | |
 |---|---|
 | Période couverte | 2018-01 → 2026-06 (102 mois) |
@@ -15,6 +18,8 @@ modèle en étoile → couche dbt testée → restitution Power BI.
 | Liaisons | 146 (59 gares, 2 services) |
 | Faits de causes après dépivotage | 60 568 |
 | Tests dbt | 32, tous au vert |
+| Trains circulés sur la période | 3 195 193 |
+| Régularité globale | 85,51 % |
 
 ---
 
@@ -83,6 +88,17 @@ apporte la régularité composite nationale mensuelle, ce qui donne
 `ecart_vs_national_pt` : une liaison n'est pas jugée dans l'absolu mais par rapport
 au réseau, le même mois.
 
+**La dimension temps est construite pour un moteur BI, pas pour un humain.** Deux
+détails qui n'en sont pas :
+
+- `premier_jour` est un vrai type `DATE`, pas une chaîne. Les fonctions de temps de
+  Power BI (`DATEADD`, `SAMEPERIODLASTYEAR`…) refusent une colonne texte, et l'erreur
+  ne se voit qu'au moment d'écrire la mesure de variation annuelle.
+- Le trimestre se calcule avec `FLOOR((mois − 1) / 3) + 1`, pas avec un `CAST`.
+  `CAST` arrondit au plus proche : `(3−1)/3 = 0,67` devient `1`, et mars bascule au
+  deuxième trimestre. Même erreur pour juin, septembre et décembre — quatre mois sur
+  douze dans le mauvais trimestre, sans qu'aucun test ne s'en aperçoive.
+
 ## 3. Qualité : sept règles, et une quarantaine motivée
 
 Une ligne non conforme n'est jamais supprimée. Elle part en table de rejets **avec
@@ -99,6 +115,9 @@ le motif de son exclusion**, parce que la question qui suit un rejet est toujour
 | `R06_COMPTAGE_NEGATIF` | 43 | Nombre de trains négatif |
 | `R07_SEUIL15_SUP_TOTAL` | 31 | Retards > 15 min dépassant le total des retards |
 
+Une ligne peut violer plusieurs règles : les motifs sont concaténés, pas exclusifs.
+D'où 649 déclenchements pour 542 lignes rejetées.
+
 ### Ce que les règles ont révélé
 
 **Le premier trimestre 2025 est corrompu.** Les 357 violations de hiérarchie ne sont
@@ -108,6 +127,7 @@ compris en 2026. La colonne « > 30 min » y contient des zéros et **43 valeurs
 négatives**, jusqu'à −44. Permuter les colonnes > 30 et > 60 rétablirait la hiérarchie
 sur 361 lignes sur 363 — mais les valeurs négatives excluent la simple inversion.
 Conclusion retenue : incident de publication sur un trimestre, pas erreur ponctuelle.
+La page « Qualité des données » du tableau de bord le rend visible d'un coup d'œil.
 
 **Le printemps 2020 se lit dans les données.** Les 63 lignes « annulés > prévus » et
 les 73 lignes « aucune circulation prévue » sont toutes situées entre avril et
@@ -120,6 +140,41 @@ un artefact réel, pas un bug.
 amont : les règles vérifiaient la hiérarchie interne des seuils mais pas la borne
 supérieure. D'où la règle `R07`, ajoutée en amont plutôt qu'un assouplissement du
 test. C'est exactement le rôle qu'on attend d'une couche de tests.
+
+**Le même fichier ne se lit pas de la même façon en pandas et en Spark.** Le CSV
+compte **15 062 lignes physiques pour 12 544 enregistrements** : le champ
+« Commentaire retards à l'arrivée » décrit les incidents du mois sur plusieurs
+lignes, jusqu'à 28 pour un seul enregistrement, et l'écart de 2 517 correspond
+exactement au nombre de sauts de ligne qu'il contient. pandas gère ces champs
+multi-lignes par défaut ; Spark non, sauf `multiLine=True`. Sans cette option,
+Spark coupe l'enregistrement au premier saut de ligne et perd **toutes les
+colonnes suivantes — dont les six causes de retard**, situées après la colonne
+commentaire. Le symptôme visible était 2 517 fragments aux gares nulles ; filtrer
+ces fragments faisait passer la vérification du grain tout en laissant 698
+enregistrements amputés de leurs causes. La comparaison des comptes entre les
+deux moteurs est le seul moyen de s'en apercevoir — d'où la vérification du grain
+et des volumes **à chaque étape** plutôt qu'une seule fois en fin de chaîne.
+
+**Un pipeline peut « réussir » en produisant zéro ligne.** Le portage PySpark
+construisait les motifs de rejet avec `array_remove(array(...), None)`. Or dans
+Spark, `array_remove` renvoie **NULL** lorsque l'élément à retirer est NULL :
+la colonne valait NULL partout, `size(NULL)` n'est ni `0` ni `> 0`, et les deux
+filtres qui suivent — conformes et rejets — ne retenaient plus rien. Aucune
+erreur levée, trois tables Delta écrites, `conformes : 0   rejetées : 0`.
+
+Deux conséquences, appliquées au notebook :
+
+- Les motifs se construisent désormais avec `concat_ws`, qui ignore nativement
+  les NULL.
+- **Un contrôle qui ne vérifie pas le volume ne vérifie rien.** La vérification
+  du grain passait sans broncher : zéro ligne, zéro doublon. Le notebook impose
+  maintenant `assert d.count() == 12544` avant le contrôle d'unicité, et
+  `conformes + rejetées == total` après application des règles.
+
+**Delta refuse les espaces dans les noms de colonnes.** L'écriture en table gérée
+a échoué sur deux colonnes oubliées dans la chaîne de renommage. Le notebook
+vérifie désormais l'ensemble des noms avant l'écriture et nomme la colonne
+fautive, au lieu de laisser l'erreur remonter du moteur de stockage.
 
 **Trois colonnes ont été écartées de la source**, et c'est documenté : deux colonnes
 de commentaires vides sur 100 % des lignes, et « retard moyen > 15 min (si liaison
@@ -149,35 +204,81 @@ modèle en étoile. 32 tests, tous au vert.
 - **70,1 % des retards attribués relèvent de la production ferroviaire**, le reste
   de causes externes et de la prise en charge des voyageurs.
 
-## 6. Exécution
+Les mêmes agrégats calculés en local (DuckDB) et sur Databricks (PySpark, Delta)
+donnent des résultats **identiques sur les neuf années** — c'est la vérification
+qui justifie de maintenir les deux implémentations.
+
+## 6. Organisation du dépôt
+
+```
+├── src/
+│   ├── 01_extract.py                    CSV -> Parquet, schéma explicite, horodaté
+│   ├── 02_transform.py                  7 règles de qualité, quarantaine motivée
+│   └── 03_load_star.py                  modèle en étoile (DuckDB + SQL)
+├── notebooks/
+│   └── databricks_transformation_pyspark.py   même logique, distribuée, écriture Delta
+├── dbt_kpi/
+│   ├── models/staging/                  stg_regularite, stg_causes
+│   ├── models/marts/                    mart_regularite_mensuelle, mart_causes_par_famille
+│   ├── macros/tests_generiques.sql      intervalle_accepte, combinaison_unique
+│   ├── tests/                           3 tests singuliers (règles métier)
+│   └── profiles.example.yml             profil à copier, jamais versionné
+├── docs/
+│   ├── powerbi.md                       modèle, relations, mesures DAX, visuels
+│   └── dashboard_*.png                  captures du tableau de bord
+└── data/                                ignoré par Git — voir ci-dessous
+```
+
+## 7. Exécution
+
+Les fichiers sources ne sont pas versionnés. Les télécharger depuis
+[SNCF Open Data](https://ressources.data.sncf.com) et les déposer dans `data/raw/`
+sous les noms `regularite_liaison_mensuelle.csv` et
+`regularite_nationale_mensuelle.csv`.
 
 ```bash
 pip install -r requirements.txt
+
+# Les trois scripts résolvent leurs chemins depuis la racine du dépôt :
+# ils fonctionnent quel que soit le dossier d'où on les lance.
 python src/01_extract.py      # CSV -> Parquet, schéma explicite
 python src/02_transform.py    # règles de qualité, quarantaine motivée
 python src/03_load_star.py    # modèle en étoile (DuckDB + SQL)
+
 cd dbt_kpi && dbt build       # 32 tests
 ```
 
+**Configuration dbt** — le profil n'est pas versionné (il porte des identifiants
+sur un vrai entrepôt). Copier `dbt_kpi/profiles.example.yml` vers
+`~/.dbt/profiles.yml` (Linux/macOS) ou `%USERPROFILE%\.dbt\profiles.yml`
+(Windows), puis lancer `dbt` **depuis le dossier `dbt_kpi/`** : le chemin
+`../data/out/kpi.duckdb` du profil est relatif au dossier d'exécution.
+
+`dbt build` sur une base vide n'échoue pas franchement : DuckDB crée le fichier
+et les tests remontent « Table does not exist ». Si c'est le cas, les trois
+scripts Python n'ont pas encore tourné.
+
 La transformation existe aussi en **PySpark pour Databricks**
 (`notebooks/databricks_transformation_pyspark.py`) : mêmes règles, même table de
-rejets, exécution distribuée et écriture en Delta.
+rejets, exécution distribuée et écriture en Delta. Le notebook détecte le catalogue
+disponible (`workspace` sur l'édition gratuite, `main` ailleurs) plutôt que de le
+supposer.
 
-## 7. Restitution
+## 8. Restitution
 
 Les tables du modèle sont exportées en Parquet dans `data/out/`, prêtes à charger
-dans Power BI. Voir `docs/powerbi.md` pour le modèle de données, les relations et
-les mesures DAX.
+dans Power BI. `docs/powerbi.md` détaille le modèle de données, les relations, les
+mesures DAX et la construction des huit visuels sur deux pages — dont une page
+entière consacrée à ce qui a été **écarté** : la plupart des tableaux de bord ne
+montrent que ce qui a survécu.
 
-![Tableau de bord — pilotage](docs/dashboard_pilotage.png)
-![Tableau de bord — qualité des données](docs/dashboard_qualite.png)
 ---
 
 ### Stack
 
-Python (pandas, pyarrow) · SQL · DuckDB · PySpark / Databricks · dbt · Power BI
+Python (pandas, pyarrow) · SQL · DuckDB · PySpark / Databricks · Delta Lake · dbt · Power BI
 
 ### Source des données
 
-[SNCF Open Data — Régularité mensuelle TGV (AQST)](https://ressources.data.sncf.com)
-et régularité mensuelle nationale. Licence ouverte.
+[SNCF Open Data — Régularité mensuelle des TGV (AQST)](https://ressources.data.sncf.com)
+et régularité mensuelle nationale. Licence ouverte (Etalab).
